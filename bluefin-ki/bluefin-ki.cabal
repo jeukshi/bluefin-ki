@@ -1,0 +1,35 @@
+cabal-version:      3.0
+name:               bluefin-ki
+version:            0.0.0.1
+license:            MIT
+license-file:       LICENSE
+author:             Daniel Orłowski
+maintainer:         Daniel Orłowski
+build-type:         Simple
+extra-doc-files:    CHANGELOG.md
+description:        Bluefin wrapper for ki library.
+synopsis:           Bluefin wrapper for ki library.
+homepage:           https://github.com/jeukshi/bluefin-ki
+bug-reports:        https://github.com/jeukshi/bluefin-ki/issues
+
+common warning-opts
+    ghc-options: -Wall -Wcompat
+
+library
+  import:
+      warning-opts
+  hs-source-dirs:
+      src
+  exposed-modules:
+    , Bluefin.Ki
+    , Bluefin.KiTypeclass
+    , Bluefin.KiRewire
+  build-depends:
+    , base >=4.7 && <5
+    , bluefin == 0.0.14.0
+    , bluefin-internal == 0.0.14.0
+    , ki
+  default-language: GHC2021
+  default-extensions:
+      BlockArguments
+    , ImportQualifiedPost
