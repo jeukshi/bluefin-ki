@@ -3,7 +3,13 @@ module Bluefin.KiRewire where
 import Bluefin.Compound
 import Bluefin.Eff
 import Bluefin.IO
-import Bluefin.Internal (Eff (UnsafeMkEff), IOE (MkIOE), State (UnsafeMkState), unsafeUnEff)
+import Bluefin.Internal (
+    Eff (UnsafeMkEff),
+    Effects (Union),
+    IOE (MkIOE),
+    State (UnsafeMkState),
+    unsafeUnEff,
+ )
 import Bluefin.Ki
 import Bluefin.State
 import Data.IORef (newIORef, readIORef)

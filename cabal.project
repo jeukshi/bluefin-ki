@@ -1,4 +1,3 @@
 packages:
     ./bluefin-ki
 
-multi-repl: True

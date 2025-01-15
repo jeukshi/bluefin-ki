@@ -15,21 +15,54 @@ bug-reports:        https://github.com/jeukshi/bluefin-ki/issues
 common warning-opts
     ghc-options: -Wall -Wcompat
 
+executable app
+  import:
+      warning-opts
+  main-is: Main.hs
+  ghc-options: -threaded -with-rtsopts=-N -fdefer-typed-holes
+  hs-source-dirs: app
+  build-depends:
+    , base >=4.7 && <5
+    , bluefin == 0.0.14.0
+    , bluefin-internal == 0.0.14.0
+    , ki
+    , bluefin-ki
+    , monad-par
+    , timeit
+    , criterion
+  default-language: GHC2021
+  default-extensions:
+      BlockArguments
+    , ImportQualifiedPost
+    , LambdaCase
+
+  -- other-modules:
+  -- build-depends:
+
 library
   import:
       warning-opts
+  ghc-options: -fdefer-typed-holes
   hs-source-dirs:
       src
   exposed-modules:
     , Bluefin.Ki
     , Bluefin.KiTypeclass
     , Bluefin.KiRewire
+    , Bluefin.Parallel
+    , Bluefin.Parallel.Stream
+    , Bluefin.KiPureExamples
   build-depends:
     , base >=4.7 && <5
     , bluefin == 0.0.14.0
     , bluefin-internal == 0.0.14.0
     , ki
+    , monad-par
+    , vector
+    , stm
+    , deepseq
   default-language: GHC2021
   default-extensions:
       BlockArguments
     , ImportQualifiedPost
+    , LambdaCase
