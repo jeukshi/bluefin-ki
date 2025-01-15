@@ -34,7 +34,7 @@ runParallel action = do
 pureFork
     :: (e :> es)
     => PureScope sE e
-    -> Eff (e :& forkEs) r
+    -> Eff e r
     -> Eff es (PureThread r sE es)
 pureFork (UnsafeMkPureScope scope) action = do
     t <- UnsafeMkEff $ Ki.fork scope do

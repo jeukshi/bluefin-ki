@@ -55,7 +55,7 @@ pureProducer
     :: (e :> es)
     => (Show a)
     => PureScope sE e
-    -> (Producer a pE -> Eff (e :& pE :& forkEs) r)
+    -> (Producer a pE -> Eff (e :& pE) r)
     -> Eff es (Consumer a sE es, PureThread r sE es)
 pureProducer (UnsafeMkPureScope scope) action = do
     (pt, values, sMax) <- UnsafeMkEff do
