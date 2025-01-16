@@ -51,7 +51,9 @@ library
     , Bluefin.KiRewire
     , Bluefin.Parallel
     , Bluefin.Parallel.Stream
+    , Bluefin.Parallel.Exception
     , Bluefin.KiPureExamples
+    , Bluefin.KiExceptionExamples
   build-depends:
     , base >=4.7 && <5
     , bluefin == 0.0.14.0
@@ -61,6 +63,7 @@ library
     , vector
     , stm
     , deepseq
+    , containers
   default-language: GHC2021
   default-extensions:
       BlockArguments

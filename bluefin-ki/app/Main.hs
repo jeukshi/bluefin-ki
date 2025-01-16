@@ -1,18 +1,22 @@
 module Main where
 
+import Bluefin.KiExceptionExamples (runForks)
 import Bluefin.KiPureExamples
 import Control.Monad.Par (runPar)
 import Criterion.Main
 
-main' :: IO ()
-main' = do
-    let r = streamPar2
-    let r2 = streamPar2
-    print $ "r: " <> show r
-    print $ "r2: " <> show r2
-
 main :: IO ()
 main = do
+    print runForks
+
+{-let r = streamPar2
+let r2 = streamPar2
+print $ "r: " <> show r
+print $ "r2: " <> show r2
+-}
+
+main' :: IO ()
+main' = do
     let f (x :: Integer) = sum [x .. 9_999_999]
     defaultMain
         [ bgroup
