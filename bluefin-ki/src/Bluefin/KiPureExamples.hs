@@ -188,3 +188,9 @@ streamSumTwiceInOneT l = runPureEff do
                         modify s (+ tEl)
                 get s
         pureGet par t1
+
+thisShouldNotCompile :: Int
+thisShouldNotCompile = runPureEff do
+    evalState 0 \s -> do
+        runParallel \_ -> do
+            get s -- TODO `s` is from outside, make it an error
