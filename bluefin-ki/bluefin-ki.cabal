@@ -63,7 +63,6 @@ library
     , vector
     , stm
     , deepseq
-    , containers
   default-language: GHC2021
   default-extensions:
       BlockArguments
