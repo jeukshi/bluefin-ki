@@ -216,18 +216,18 @@ advanceState mainId state = \cases
         return Nothing
     (originId `EvAwaiting` otherId) -> do
         removeFrom state originId
-        isThrowing state otherId >>= \case
+        maybeThrowing state otherId >>= \case
             Nothing -> do
                 addTo state (ThreadState originId (Right otherId))
             Just ex -> do
                 addTo state (ThreadState originId (Left ex))
                 propagateException state originId ex
-        isThrowing state mainId
+        maybeThrowing state mainId
     (EvException originId ex) -> do
         removeFrom state originId
         addTo state (ThreadState originId (Left ex))
         propagateException state originId ex
-        isThrowing state mainId
+        maybeThrowing state mainId
   where
     propagateException
         :: (e :> es)
@@ -251,12 +251,12 @@ advanceState mainId state = \cases
     addTo :: (e :> es) => State [ThreadState] e -> ThreadState -> Eff es ()
     addTo s t = modify s (t :)
 
-    isThrowing
+    maybeThrowing
         :: (e :> es)
         => State [ThreadState] e
         -> TrId
         -> Eff es (Maybe ParExResult)
-    isThrowing s trId =
+    maybeThrowing s trId =
         listToMaybe . mapMaybe getException . filter (isThread trId)
             <$> get s
       where
