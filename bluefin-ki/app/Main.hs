@@ -1,13 +1,15 @@
 module Main where
 
-import Bluefin.KiExceptionExamples (runForks)
+import Bluefin.KiExceptionExamples
 import Bluefin.KiPureExamples
 import Control.Monad.Par (runPar)
 import Criterion.Main
 
 main :: IO ()
 main = do
-    print runForks
+    let l = [3, 2, 1, 0]
+    print $ validateList l
+    print $ validateListPar l
 
 {-let r = streamPar2
 let r2 = streamPar2

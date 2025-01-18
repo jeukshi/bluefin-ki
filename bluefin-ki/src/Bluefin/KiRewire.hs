@@ -5,7 +5,6 @@ import Bluefin.Eff
 import Bluefin.IO
 import Bluefin.Internal (
     Eff (UnsafeMkEff),
-    Effects (Union),
     IOE (MkIOE),
     State (UnsafeMkState),
     unsafeUnEff,

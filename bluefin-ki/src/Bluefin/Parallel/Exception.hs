@@ -1,31 +1,32 @@
 module Bluefin.Parallel.Exception where
 
 import Bluefin.Compound
-import Bluefin.EarlyReturn
 import Bluefin.Eff
 import Bluefin.Exception
 import Bluefin.IO
-import Bluefin.Internal (Eff (UnsafeMkEff), unsafeProvideIO, unsafeUnEff, withEarlyReturn)
+import Bluefin.Internal (
+    Eff (UnsafeMkEff),
+    returnEarly,
+    unsafeProvideIO,
+    unsafeUnEff,
+    withEarlyReturn,
+ )
 import Bluefin.State
-import Bluefin.StateSource (newState, withStateSource)
 import Control.Concurrent.MVar (MVar, newEmptyMVar, readMVar)
 import Control.Concurrent.STM qualified as STM
 import Control.Exception qualified
-import Control.Monad (forever, unless)
+import Control.Monad (forM_, forever)
 import Data.Coerce (coerce)
-import Data.List (find)
 import Data.Maybe (listToMaybe, mapMaybe)
 import Data.Proxy (Proxy (..))
-import Data.Tree
 import Data.Unique (Unique)
 import Data.Unique qualified as Unique
-import GHC.Conc (ThreadId)
 import Ki qualified
 import Unsafe.Coerce (unsafeCoerce)
 
 data PureScope (scopeE :: Effects) (e :: Effects) = UnsafeMkPureScope
     { scopeKiScope :: Ki.Scope
-    , scopeEvents :: STM.TChan ScopeEvent
+    , scopeEvents :: STM.TChan (Maybe ScopeEvent)
     , scopeCurrentThread :: TrId
     , scopeForeverEmpty :: MVar ()
     }
@@ -55,28 +56,26 @@ newTrId = coerce Unique.newUnique
 instance Show TrId where
     show = ("TrId" <>) . show . Unique.hashUnique . coerce
 
-data ThreadInfo = ThreadInfo TrId ThreadState
-    deriving (Show)
-
-data ThreadState
-    = Awaiting TrId
-    | Throwing BfParThreadPureException
+-- Left throwing exception.
+-- Right awaiting for thread with id `TrId`.
+data ThreadState = ThreadState TrId (Either ParExResult TrId)
     deriving (Show)
 
 data ScopeEvent
-    = EvMainFinished
-    | EvAwaiting TrId TrId
+    = EvAwaiting TrId TrId
     | EvDoneAwaiting TrId TrId
-    | EvException TrId BfParThreadPureException
+    | EvException TrId ParExResult
     deriving (Show)
 
-data BfParThreadPureException where
-    BfParThreadPureException :: e -> TrId -> BfParThreadPureException
+-- This is an exception, but it should never leave `runParallel`.
+-- TODO Maybe we could switch to EarlyReturn/checked exceptions.
+data ParExResult where
+    ParExResult :: e -> TrId -> ParExResult
 
-instance Show BfParThreadPureException where
-    show (BfParThreadPureException _ trId) = "<PAREX trId:" <> show trId <> ">"
+instance Show ParExResult where
+    show (ParExResult _ trId) = "<ParExResult trId:" <> show trId <> ">"
 
-instance Control.Exception.Exception BfParThreadPureException
+instance Control.Exception.Exception ParExResult
 
 runParallelEx
     :: forall exT scopeE exE es r parEs
@@ -100,12 +99,13 @@ runParallelEx exception action = do
                         (UnsafeMkPureScope s eventChan mainId emptyForever)
                         (UnsafeMkParException (Proxy @exT))
 
-                STM.atomically do STM.writeTChan eventChan EvMainFinished
+                -- \| Terminate `parallelMonitor`
+                STM.atomically do STM.writeTChan eventChan Nothing
                 STM.atomically (Ki.awaitAll s) -- FIXME do we need it?
                 return r
 
         r <- effIO io $ flip Control.Exception.tryJust parRun $ \case
-            BfParThreadPureException @ee e trId ->
+            ParExResult @ee e trId ->
                 if trId == mainId
                     then Just (unsafeCoerce @ee e)
                     else Nothing
@@ -113,102 +113,6 @@ runParallelEx exception action = do
         case r of
             Right res -> pure res
             Left e -> throw exception e
-  where
-    parallelMonitor :: STM.TChan ScopeEvent -> TrId -> IO ()
-    parallelMonitor chan mainId = runEff \io -> do
-        evalState [] \s -> do
-            withEarlyReturn \ret -> do
-                forever do
-                    event <- effIO io do STM.atomically (STM.readTChan chan)
-                    ss <- get s
-                    effIO io do putStrLn $ show event <> "  STATE: "
-                    case event of
-                        EvMainFinished -> do
-                            effIO io do putStrLn "FINISHEDDDD"
-                            returnEarly ret ()
-                        (someId `EvDoneAwaiting` otherId) -> do
-                            modify s $
-                                filter
-                                    ( \(ThreadInfo tid state) ->
-                                        case state of
-                                            Awaiting awaitId -> not (tid == someId && awaitId == otherId)
-                                            _ -> True
-                                    )
-                        (someId `EvAwaiting` otherId) -> do
-                            threads <- get s
-                            case isThreadThrowing otherId threads of
-                                Just ex -> do
-                                    modify s $ \ts ->
-                                        ThreadInfo someId (Throwing ex)
-                                            : filter (\(ThreadInfo tid _) -> tid /= someId) ts
-                                    propagateException someId ex s
-                                Nothing -> do
-                                    modify s $ \ts ->
-                                        ThreadInfo someId (Awaiting otherId)
-                                            : filter (\(ThreadInfo tid _) -> tid /= someId) ts
-
-                            threads' <- get s
-                            effIO io do print threads'
-                            case checkMainThrowing mainId threads' of
-                                Just ex -> case ex of
-                                    BfParThreadPureException exV _ ->
-                                        effIO io $
-                                            Control.Exception.throwIO
-                                                (BfParThreadPureException exV mainId)
-                                Nothing -> pure ()
-                        (EvException threadId threadEx) -> do
-                            modify s $ \ts ->
-                                ThreadInfo threadId (Throwing threadEx)
-                                    : filter (\(ThreadInfo tid _) -> tid /= threadId) ts
-                            propagateException threadId threadEx s
-                            threads <- get s
-                            effIO io do print threads
-                            case checkMainThrowing mainId threads of
-                                Just ex -> case ex of
-                                    BfParThreadPureException exV _ ->
-                                        effIO io $
-                                            Control.Exception.throwIO
-                                                (BfParThreadPureException exV mainId)
-                                Nothing -> pure ()
-
-checkMainThrowing :: TrId -> [ThreadInfo] -> Maybe BfParThreadPureException
-checkMainThrowing mainId threads =
-    case find (\(ThreadInfo tid _) -> tid == mainId) threads of
-        Just (ThreadInfo _ (Throwing ex)) -> Just ex
-        _ -> Nothing
-
-findAwaiting :: TrId -> [ThreadInfo] -> [TrId]
-findAwaiting targetId = map (\(ThreadInfo tid _) -> tid) . filter isAwaiting
-  where
-    isAwaiting (ThreadInfo _ (Awaiting awaitId)) = awaitId == targetId
-    isAwaiting _ = False
-
-isThreadThrowing :: TrId -> [ThreadInfo] -> Maybe BfParThreadPureException
-isThreadThrowing tid = listToMaybe . mapMaybe getException . filter matchId
-  where
-    matchId (ThreadInfo id_ _) = id_ == tid
-    getException (ThreadInfo _ (Throwing ex)) = Just ex
-    getException _ = Nothing
-
-propagateException
-    :: forall e es
-     . (e :> es)
-    => TrId
-    -> BfParThreadPureException
-    -> State [ThreadInfo] e
-    -> Eff es ()
-propagateException sourceId ex s = do
-    threads <- get s
-    let awaitingIds = findAwaiting sourceId threads
-    unless (null awaitingIds) $ do
-        modify s $ \ts ->
-            [ThreadInfo tid (Throwing ex) | tid <- awaitingIds]
-                ++ filter
-                    ( \(ThreadInfo tid _) ->
-                        tid `notElem` awaitingIds
-                    )
-                    ts
-        mapM_ (\tid -> propagateException tid ex s) awaitingIds
 
 pureFork
     :: (e :> es)
@@ -239,14 +143,14 @@ pureForkEx (UnsafeMkPureScope scope chan _ emptyForever) ex action = do
         t <- Ki.fork scope do
             let f = unsafeUnEff (action (UnsafeMkPureScope scope chan childId emptyForever) ex)
             r <- flip Control.Exception.tryJust f $ \case
-                BfParThreadPureException @exT e trId ->
+                ParExResult @exT e trId ->
                     if trId == childId
-                        then Just (BfParThreadPureException e trId)
+                        then Just (ParExResult e trId)
                         else Nothing
             case r of
                 Right res -> return res
                 Left childEx -> do
-                    STM.atomically do STM.writeTChan chan (EvException childId childEx)
+                    STM.atomically do STM.writeTChan chan (Just $ EvException childId childEx)
                     readMVar emptyForever
                     error "MVar wasn't empty uuu" -- TODO we need some BluefinAssertionException
         return (t, childId)
@@ -260,9 +164,11 @@ pureGet
 pureGet (UnsafeMkPureScope _ chan threadId _) (UnsafeMkPureThread t otherId) =
     UnsafeMkEff do
         -- TODO check if thread is pure
-        STM.atomically do STM.writeTChan chan (threadId `EvAwaiting` otherId)
+        STM.atomically do
+            STM.writeTChan chan (Just $ threadId `EvAwaiting` otherId)
         r <- STM.atomically (Ki.await t)
-        STM.atomically do STM.writeTChan chan (threadId `EvDoneAwaiting` otherId)
+        STM.atomically do
+            STM.writeTChan chan (Just $ threadId `EvDoneAwaiting` otherId)
         return r
 
 pureThrow
@@ -272,4 +178,96 @@ pureThrow
     -> exT
     -> Eff es ()
 pureThrow (UnsafeMkPureScope _ _ trId _) _ exV = UnsafeMkEff do
-    Control.Exception.throwIO (BfParThreadPureException exV trId)
+    Control.Exception.throwIO (ParExResult exV trId)
+
+parallelMonitor :: STM.TChan (Maybe ScopeEvent) -> TrId -> IO ()
+parallelMonitor chan mainId = runEff \io -> do
+    evalState [] \s -> do
+        withEarlyReturn \ret -> do
+            forever do
+                mbEvent <- effIO io do STM.atomically (STM.readTChan chan)
+                case mbEvent of
+                    Nothing -> do
+                        returnEarly ret ()
+                    Just event -> do
+                        advanceState mainId s event >>= \case
+                            Nothing -> pure ()
+                            Just (ParExResult exV _) ->
+                                effIO io do
+                                    Control.Exception.throwIO
+                                        (ParExResult exV mainId)
+
+{- | TODO we operate under the assumption that there
+is only one element in the list for each threadId,
+so this should be a map.
+-}
+advanceState
+    :: (e :> es)
+    => TrId
+    -> State [ThreadState] e
+    -> ScopeEvent
+    -> Eff es (Maybe ParExResult)
+advanceState mainId state = \cases
+    (originId `EvDoneAwaiting` _) -> do
+        -- This event doesn't seem necessary, it just keeps
+        -- our state tidy. Maybe `EvThreadEnded` event would be
+        -- better for this.
+        removeFrom state originId
+        return Nothing
+    (originId `EvAwaiting` otherId) -> do
+        removeFrom state originId
+        isThrowing state otherId >>= \case
+            Nothing -> do
+                addTo state (ThreadState originId (Right otherId))
+            Just ex -> do
+                addTo state (ThreadState originId (Left ex))
+                propagateException state originId ex
+        isThrowing state mainId
+    (EvException originId ex) -> do
+        removeFrom state originId
+        addTo state (ThreadState originId (Left ex))
+        propagateException state originId ex
+        isThrowing state mainId
+  where
+    propagateException
+        :: (e :> es)
+        => State [ThreadState] e
+        -> TrId
+        -> ParExResult
+        -> Eff es ()
+    propagateException s sourceId ex = do
+        awaitingIds <- awaitingFor s sourceId
+        forM_ awaitingIds \awaitingId -> do
+            removeFrom s awaitingId
+            addTo s $ ThreadState awaitingId (Left ex)
+            propagateException s awaitingId ex
+
+    isThread :: TrId -> ThreadState -> Bool
+    isThread trId (ThreadState someId _) = trId == someId
+
+    removeFrom :: (e :> es) => State [ThreadState] e -> TrId -> Eff es ()
+    removeFrom s trId = modify s $ filter (not . isThread trId)
+
+    addTo :: (e :> es) => State [ThreadState] e -> ThreadState -> Eff es ()
+    addTo s t = modify s (t :)
+
+    isThrowing
+        :: (e :> es)
+        => State [ThreadState] e
+        -> TrId
+        -> Eff es (Maybe ParExResult)
+    isThrowing s trId =
+        listToMaybe . mapMaybe getException . filter (isThread trId)
+            <$> get s
+      where
+        getException (ThreadState _ (Left ex)) = Just ex
+        getException _ = Nothing
+
+    awaitingFor :: (e :> es) => State [ThreadState] e -> TrId -> Eff es [TrId]
+    awaitingFor s targetId =
+        map (\(ThreadState tid _) -> tid)
+            . filter isAwaiting
+            <$> get s
+      where
+        isAwaiting (ThreadState _ (Right awaitId)) = awaitId == targetId
+        isAwaiting _ = False
